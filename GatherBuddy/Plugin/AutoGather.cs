@@ -147,13 +147,15 @@ namespace GatherBuddy.Plugin
         }
         private int _currentNodeIndex = 0;
         public List<Vector3> RecentlyVistedNodes = new List<Vector3>();
-        private void PathfindToFarNode(Gatherable desiredItem)
+        private void PathfindToFarNode()
         {
-            if (desiredItem == null)
+            if (DesiredItems.Count() == 0)
                 return;
 
-            var nodeList = desiredItem.NodeList;
-            if (nodeList == null)
+            nodeList = DesiredItems
+                        .SelectMany(item => item.NodeList ?? new List<GatheringNode>())
+                        .ToList();
+            if (nodeList.Count() == 0)
                 return;
 
             var currentPosition = Dalamud.ClientState.LocalPlayer.Position;
@@ -308,7 +310,7 @@ namespace GatherBuddy.Plugin
                     }
 
                     AutoState = AutoStateType.Pathing;
-                    PathfindToFarNode(DesiredItem);
+                    PathfindToFarNode();
                     return;
                 }
 
