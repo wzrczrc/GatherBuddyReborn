@@ -143,6 +143,7 @@ namespace GatherBuddy.AutoGather
 
         public List<IGatherable> TimedItemsToGather = new();
         public List<IGatherable> ItemsToGather      = new();
+        public IGatherable? ItemToGathering          = null;
 
         public List<uint> TimedNodesGatheredThisTrip = new();
 

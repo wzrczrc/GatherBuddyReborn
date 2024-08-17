@@ -160,6 +160,11 @@ namespace GatherBuddy.AutoGather
             Gatherable? targetItem =
                 (TimedItemsToGather.Count > 0 ? TimedItemsToGather.MinBy(GetNodeTypeAsPriority) : ItemsToGather.FirstOrDefault()) as Gatherable;
 
+            if (ItemToGathering != null)
+            {
+                targetItem = ItemToGathering as Gatherable;
+            }
+
             if (targetItem == null)
             {
                 if (!_plugin.GatherWindowManager.ActiveItems.Any(i => InventoryCount(i) < QuantityTotal(i)))
@@ -185,6 +190,7 @@ namespace GatherBuddy.AutoGather
                 AutoStatus = "Gathering...";
                 TaskManager.Enqueue(VNavmesh_IPCSubscriber.Path_Stop);
                 DoActionTasks(targetItem);
+                ItemToGathering = null;
                 return;
             }
 
@@ -217,59 +223,64 @@ namespace GatherBuddy.AutoGather
                 return;
             }
 
-            var validNodesForItem = targetItem.NodeList.SelectMany(n => n.WorldPositions).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            var matchingNodesInZone = location.Location.WorldPositions.Where(w => validNodesForItem.ContainsKey(w.Key)).SelectMany(w => w.Value)
-                .Where(v => !IsBlacklisted(v))
-                .OrderBy(v => Vector3.Distance(Player.Position, v))
-                .ToList();
-            var allNodes = Svc.Objects.Where(o => matchingNodesInZone.Contains(o.Position)).ToList();
-            var closeNodes = allNodes.Where(o => o.IsTargetable)
-                .OrderBy(o => Vector3.Distance(Player.Position, o.Position));
-            if (closeNodes.Any())
+            foreach (var tItem in ItemsToGather.Cast<Gatherable>())
             {
-                TaskManager.Enqueue(() => MoveToCloseNode(closeNodes.First(n => !IsBlacklisted(n.Position)), targetItem));
-                return;
-            }
-
-            var selectedNode = matchingNodesInZone.FirstOrDefault(n => !FarNodesSeenSoFar.Contains(n));
-            if (selectedNode == Vector3.Zero)
-            {
-                FarNodesSeenSoFar.Clear();
-                GatherBuddy.Log.Verbose($"Selected node was null and far node filters have been cleared");
-                return;
-            }
-
-            // only Legendary and Unspoiled show marker
-            if (ShouldUseFlag && targetItem.NodeType is NodeType.Legendary or NodeType.Unspoiled)
-            {
-                // marker not yet loaded on game
-                if (TimedNodePosition == null)
+                var validNodesForItem = tItem.NodeList.SelectMany(n => n.WorldPositions).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                var matchingNodesInZone = location.Location.WorldPositions.Where(w => validNodesForItem.ContainsKey(w.Key)).SelectMany(w => w.Value)
+                    .Where(v => !IsBlacklisted(v))
+                    .OrderBy(v => Vector3.Distance(Player.Position, v))
+                    .ToList();
+                var allNodes = Svc.Objects.Where(o => matchingNodesInZone.Contains(o.Position)).ToList();
+                var closeNodes = allNodes.Where(o => o.IsTargetable)
+                    .OrderBy(o => Vector3.Distance(Player.Position, o.Position));
+                if (closeNodes.Any())
                 {
-                    AutoStatus = "Waiting on flag show up";
+                    ItemToGathering = tItem;
+                    TaskManager.Enqueue(() => MoveToCloseNode(closeNodes.First(n => !IsBlacklisted(n.Position)), tItem));
                     return;
                 }
 
-                //AutoStatus = "Moving to farming area...";
-                selectedNode = matchingNodesInZone
-                    .Where(o => Vector2.Distance(TimedNodePosition.Value, new Vector2(o.X, o.Z)) < 10).OrderBy(o
-                        => Vector2.Distance(TimedNodePosition.Value, new Vector2(o.X, o.Z))).FirstOrDefault();
-            }
+                var selectedNode = matchingNodesInZone.FirstOrDefault(n => !FarNodesSeenSoFar.Contains(n));
+                if (selectedNode == Vector3.Zero)
+                {
+                    FarNodesSeenSoFar.Clear();
+                    GatherBuddy.Log.Verbose($"Selected node was null and far node filters have been cleared");
+                    return;
+                }
 
-            if (allNodes.Any(n => n.Position == selectedNode && Vector3.Distance(n.Position, Player.Position) < 100))
-            {
-                FarNodesSeenSoFar.Add(selectedNode);
+                // only Legendary and Unspoiled show marker
+                if (ShouldUseFlag && tItem.NodeType is NodeType.Legendary or NodeType.Unspoiled)
+                {
+                    // marker not yet loaded on game
+                    if (TimedNodePosition == null)
+                    {
+                        AutoStatus = "Waiting on flag show up";
+                        return;
+                    }
 
-                CurrentDestination = null;
-                VNavmesh_IPCSubscriber.Path_Stop();
-                AutoStatus = "Looking for far away nodes...";
+                    //AutoStatus = "Moving to farming area...";
+                    selectedNode = matchingNodesInZone
+                        .Where(o => Vector2.Distance(TimedNodePosition.Value, new Vector2(o.X, o.Z)) < 10).OrderBy(o
+                            => Vector2.Distance(TimedNodePosition.Value, new Vector2(o.X, o.Z))).FirstOrDefault();
+                }
+
+                if (allNodes.Any(n => n.Position == selectedNode && Vector3.Distance(n.Position, Player.Position) < 100))
+                {
+                    FarNodesSeenSoFar.Add(selectedNode);
+
+                    CurrentDestination = null;
+                    VNavmesh_IPCSubscriber.Path_Stop();
+                    AutoStatus = "Looking for far away nodes...";
+                    return;
+                }
+
+                ItemToGathering = tItem;
+                TaskManager.Enqueue(() => MoveToFarNode(selectedNode));
                 return;
+
+
+                AutoStatus = "Nothing to do...";
             }
-
-            TaskManager.Enqueue(() => MoveToFarNode(selectedNode));
-            return;
-
-
-            AutoStatus = "Nothing to do...";
         }
 
         private void DoSafetyChecks()
