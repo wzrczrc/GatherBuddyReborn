@@ -234,73 +234,115 @@ namespace GatherBuddy.Plugin
                 AutoStatus = "Player is busy...";
                 return;
             }
-
-            foreach (var DesiredItem in DesiredItems)
+            
+            var DesiredItem = DesiredItems.FirstOrDefault();
+            if (Dalamud.Conditions[ConditionFlag.Gathering])
             {
-                if (Dalamud.Conditions[ConditionFlag.Gathering])
-                {
-                    // This is where you can handle additional logic when close to the node without being mounted.
-                    AutoState = AutoStateType.GatheringNode;
-                    AutoStatus = $"Gathering {DesiredItem?.Name.ToString() ?? "Goose Egg"} from {Svc.Targets.Target?.Name ?? "Unknown Node"}...";
-                    GatherNode();
-                    return;
-                }
-                if (DesiredItem == null)
-                {
-                    AutoState = AutoStateType.Finish;
-                    AutoStatus = "No valid items in shopping list...";
-                    return;
-                }
-                var location = _plugin.Executor.FindClosestLocation(DesiredItem);
-                var neededJob = GetECommonsJobFromDesiredItem(DesiredItem);
-                if (neededJob != Player.Job && (location?.Territory.Id ?? 0) == Dalamud.ClientState.TerritoryType)
+                // This is where you can handle additional logic when close to the node without being mounted.
+                AutoState = AutoStateType.GatheringNode;
+                AutoStatus = $"Gathering {DesiredItem?.Name.ToString() ?? "Goose Egg"} from {Svc.Targets.Target?.Name ?? "Unknown Node"}...";
+                GatherNode();
+                return;
+            }
+            if (DesiredItem == null)
+            {
+                AutoState = AutoStateType.Finish;
+                AutoStatus = "No valid items in shopping list...";
+                return;
+            }
+            var location = _plugin.Executor.FindClosestLocation(DesiredItem);
+            var neededJob = GetECommonsJobFromDesiredItem(DesiredItem);
+            if (neededJob != Player.Job && (location?.Territory.Id ?? 0) == Dalamud.ClientState.TerritoryType)
+            {
+                AutoState = AutoStateType.Error;
+                AutoStatus = $"Switching to {neededJob} for {DesiredItem.Name[GatherBuddy.Language]}...";
+                return;
+            }
+
+            NavmeshStuckCheck();
+            var currentTerritory = Dalamud.ClientState.TerritoryType;
+            var nodeCount = GatherBuddy.GameData.GatheringNodes.Where(g => g.Value.Territory.Id == currentTerritory)
+                                                                .Where(g => NodeMatchesCurrentJob(g, DesiredItem))
+                                                                .Where(NodeMatchesDesiredItem).Count();
+            var blacklistedNodes = GatherBuddy.Config.BlacklistedAutoGatherNodesByTerritoryId.TryGetValue(currentTerritory, out var list) ? list : new List<Vector3>();
+            if (RecentlyVistedNodes.Count >= nodeCount - blacklistedNodes.Count())
+                RecentlyVistedNodes.Clear();
+
+            if (!ValidGatherables.Any())
+            {
+                if (location == null)
                 {
                     AutoState = AutoStateType.Error;
-                    AutoStatus = $"Switching to {neededJob} for {DesiredItem.Name[GatherBuddy.Language]}...";
+                    AutoStatus = "No locations for item " + DesiredItem.Name[GatherBuddy.Language] + ".";
                     return;
                 }
 
-                NavmeshStuckCheck();
-                var currentTerritory = Dalamud.ClientState.TerritoryType;
-                var nodeCount = GatherBuddy.GameData.GatheringNodes.Where(g => g.Value.Territory.Id == currentTerritory)
-                                                                    .Where(g => NodeMatchesCurrentJob(g, DesiredItem))
-                                                                    .Where(NodeMatchesDesiredItem).Count();
-                var blacklistedNodes = GatherBuddy.Config.BlacklistedAutoGatherNodesByTerritoryId.TryGetValue(currentTerritory, out var list) ? list : new List<Vector3>();
-                if (RecentlyVistedNodes.Count >= nodeCount - blacklistedNodes.Count())
-                    RecentlyVistedNodes.Clear();
-
-                if (!ValidGatherables.Any())
+                if (location.Territory.Id != currentTerritory)
                 {
-                    if (location == null)
+                    if (_teleportInitiated < DateTime.Now)
                     {
-                        AutoState = AutoStateType.Error;
-                        AutoStatus = "No locations for item " + DesiredItem.Name[GatherBuddy.Language] + ".";
-                        return;
-                    }
-
-                    if (location.Territory.Id != currentTerritory)
-                    {
-                        if (_teleportInitiated < DateTime.Now)
-                        {
-                            AutoState = AutoStateType.WaitingForTeleport;
-                            AutoStatus = "Teleporting to " + location.Territory.Name + "...";
-                            if (IsPathing)
-                                VNavmesh_IPCSubscriber.Path_Stop();
-                            else
-                            {
-                                _teleportInitiated = DateTime.Now.AddSeconds(15);
-                                _plugin.Executor.GatherItem(DesiredItem);
-                            }
-                            return;
-                        }
+                        AutoState = AutoStateType.WaitingForTeleport;
+                        AutoStatus = "Teleporting to " + location.Territory.Name + "...";
+                        if (IsPathing)
+                            VNavmesh_IPCSubscriber.Path_Stop();
                         else
                         {
-                            AutoState = AutoStateType.WaitingForTeleport;
-                            AutoStatus = "Waiting for teleport...";
-                            return;
+                            _teleportInitiated = DateTime.Now.AddSeconds(15);
+                            _plugin.Executor.GatherItem(DesiredItem);
                         }
+                        return;
                     }
+                    else
+                    {
+                        AutoState = AutoStateType.WaitingForTeleport;
+                        AutoStatus = "Waiting for teleport...";
+                        return;
+                    }
+                }
 
+                if (!Dalamud.Conditions[ConditionFlag.Mounted])
+                {
+                    AutoState = AutoStateType.Mounting;
+                    AutoStatus = "Mounting for travel...";
+                    MountUp();
+                    return;
+                }
+
+                AutoState = AutoStateType.Pathing;
+                PathfindToFarNode();
+                return;
+            }
+
+            if (ValidGatherables.Any())
+            {
+                var targetGatherable = ValidGatherables.Where(g => !IsBlacklisted(g.Position)).FirstOrDefault();
+                if (targetGatherable == null)
+                {
+                    AutoState = AutoStateType.Error;
+                    AutoStatus = "No valid nodes found...";
+                    return;
+                }
+                var distance = Vector3.Distance(targetGatherable.Position, Dalamud.ClientState.LocalPlayer.Position);
+
+                if (distance < 2.5)
+                {
+                    if (Dalamud.Conditions[ConditionFlag.Mounted])
+                    {
+                        AutoState = AutoStateType.Dismounting;
+                        AutoStatus = "Dismounting...";
+                        Dismount();
+                        return;
+                    }
+                    else
+                    {
+                        AutoState = AutoStateType.GatheringNode;
+                        AutoStatus = $"Targeting {targetGatherable.Name}...";
+                        InteractNode(targetGatherable);
+                        return;
+                    }
+                }
+                else
+                {
                     if (!Dalamud.Conditions[ConditionFlag.Mounted])
                     {
                         AutoState = AutoStateType.Mounting;
@@ -309,65 +351,21 @@ namespace GatherBuddy.Plugin
                         return;
                     }
 
-                    AutoState = AutoStateType.Pathing;
-                    PathfindToFarNode();
-                    return;
-                }
-
-                if (ValidGatherables.Any())
-                {
-                    var targetGatherable = ValidGatherables.Where(g => !IsBlacklisted(g.Position)).FirstOrDefault();
-                    if (targetGatherable == null)
+                    if (AutoState != AutoStateType.MovingToNode)
                     {
-                        AutoState = AutoStateType.Error;
-                        AutoStatus = "No valid nodes found...";
+                        _hiddenRevealed = false;
+                        AutoState = AutoStateType.MovingToNode;
+                        AutoStatus = $"Moving to node {targetGatherable.Name} at {targetGatherable.Position}";
+                        PathfindToNode(targetGatherable.Position, true);
                         return;
                     }
-                    var distance = Vector3.Distance(targetGatherable.Position, Dalamud.ClientState.LocalPlayer.Position);
 
-                    if (distance < 2.5)
+                    if (AutoState == AutoStateType.MovingToNode && Vector3.Distance(targetGatherable.Position.CorrectForMesh() , Dalamud.ClientState.LocalPlayer.Position) < 1)
                     {
-                        if (Dalamud.Conditions[ConditionFlag.Mounted])
-                        {
-                            AutoState = AutoStateType.Dismounting;
-                            AutoStatus = "Dismounting...";
-                            Dismount();
-                            return;
-                        }
-                        else
-                        {
-                            AutoState = AutoStateType.GatheringNode;
-                            AutoStatus = $"Targeting {targetGatherable.Name}...";
-                            InteractNode(targetGatherable);
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        if (!Dalamud.Conditions[ConditionFlag.Mounted])
-                        {
-                            AutoState = AutoStateType.Mounting;
-                            AutoStatus = "Mounting for travel...";
-                            MountUp();
-                            return;
-                        }
-
-                        if (AutoState != AutoStateType.MovingToNode)
-                        {
-                            _hiddenRevealed = false;
-                            AutoState = AutoStateType.MovingToNode;
-                            AutoStatus = $"Moving to node {targetGatherable.Name} at {targetGatherable.Position}";
-                            PathfindToNode(targetGatherable.Position, true);
-                            return;
-                        }
-
-                        if (AutoState == AutoStateType.MovingToNode && Vector3.Distance(targetGatherable.Position.CorrectForMesh() , Dalamud.ClientState.LocalPlayer.Position) < 1)
-                        {
-                            AutoState = AutoStateType.MovingToNode;
-                            AutoStatus = $"Moving to node {targetGatherable.Name} at {targetGatherable.Position}";
-                            PathfindToNode(targetGatherable.Position, false);
-                            return;
-                        }
+                        AutoState = AutoStateType.MovingToNode;
+                        AutoStatus = $"Moving to node {targetGatherable.Name} at {targetGatherable.Position}";
+                        PathfindToNode(targetGatherable.Position, false);
+                        return;
                     }
                 }
             }
