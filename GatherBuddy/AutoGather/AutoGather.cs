@@ -257,11 +257,12 @@ namespace GatherBuddy.AutoGather
             {
                 // 使用最近节点所属的Item
                 ItemToGathering = closeNode.Gatherable;
-                TaskManager.Enqueue(() => MoveToCloseNode(closeNode.Node, ItemToGathering));
+                TaskManager.Enqueue(() => MoveToCloseNode(closeNode.Node, closeNode.Gatherable));
                 return;
             }
 
-            var selectedNode = matchingNodesInZone.FirstOrDefault(n => !FarNodesSeenSoFar.Contains(n));
+            var matchingNodesInZone2 = matchingNodesInZone.Select(m => m.Position).ToList();
+            var selectedNode = matchingNodesInZone2.FirstOrDefault(n => !FarNodesSeenSoFar.Contains(n));
             if (selectedNode == Vector3.Zero)
             {
                 FarNodesSeenSoFar.Clear();
@@ -280,7 +281,7 @@ namespace GatherBuddy.AutoGather
                 }
 
                 //AutoStatus = "Moving to farming area...";
-                selectedNode = matchingNodesInZone
+                selectedNode = matchingNodesInZone2
                     .Where(o => Vector2.Distance(TimedNodePosition.Value, new Vector2(o.X, o.Z)) < 10).OrderBy(o
                         => Vector2.Distance(TimedNodePosition.Value, new Vector2(o.X, o.Z))).FirstOrDefault();
             }
