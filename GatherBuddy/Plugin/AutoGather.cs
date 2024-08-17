@@ -63,7 +63,7 @@ namespace GatherBuddy.Plugin
                         .Where(IsDesiredNode)
                         .OrderBy(g => Vector3.Distance(g.Position, Dalamud.ClientState.LocalPlayer.Position));
 
-        public List<Gatherable> DesiredItems => _plugin.GatherWindowManager.ActiveItems.Where(g => InventoryLessThanQuantity(g)).Cast<Gatherable>().ToList();
+        public Gatherable? DesiredItem => _plugin.GatherWindowManager.ActiveItems.Where(g => InventoryLessThanQuantity(g)).FirstOrDefault() as Gatherable;
 
         private unsafe InventoryManager* Inventory => InventoryManager.Instance();
         private unsafe bool InventoryLessThanQuantity(IGatherable g)
@@ -147,15 +147,13 @@ namespace GatherBuddy.Plugin
         }
         private int _currentNodeIndex = 0;
         public List<Vector3> RecentlyVistedNodes = new List<Vector3>();
-        private void PathfindToFarNode()
+        private void PathfindToFarNode(Gatherable desiredItem)
         {
-            if (DesiredItems.Count() == 0)
+            if (desiredItem == null)
                 return;
 
-            nodeList = DesiredItems
-                        .SelectMany(item => item.NodeList ?? new List<GatheringNode>())
-                        .ToList();
-            if (nodeList.Count() == 0)
+            var nodeList = desiredItem.NodeList;
+            if (nodeList == null)
                 return;
 
             var currentPosition = Dalamud.ClientState.LocalPlayer.Position;
@@ -234,11 +232,7 @@ namespace GatherBuddy.Plugin
                 AutoStatus = "Player is busy...";
                 return;
             }
-            
-            GatherBuddy.Log.Information($"DesiredItems Count: {DesiredItems.Count()}");
-            GatherBuddy.Log.Information($"ValidGatherables Count: {ValidGatherables.Count()}");
-            
-            var DesiredItem = DesiredItems.FirstOrDefault();
+
             if (Dalamud.Conditions[ConditionFlag.Gathering])
             {
                 // This is where you can handle additional logic when close to the node without being mounted.
@@ -254,7 +248,7 @@ namespace GatherBuddy.Plugin
                 return;
             }
             var location = _plugin.Executor.FindClosestLocation(DesiredItem);
-            var neededJob = GetECommonsJobFromDesiredItem(DesiredItem);
+            var neededJob = GetECommonsJobFromDesiredItem();
             if (neededJob != Player.Job && (location?.Territory.Id ?? 0) == Dalamud.ClientState.TerritoryType)
             {
                 AutoState = AutoStateType.Error;
@@ -265,7 +259,7 @@ namespace GatherBuddy.Plugin
             NavmeshStuckCheck();
             var currentTerritory = Dalamud.ClientState.TerritoryType;
             var nodeCount = GatherBuddy.GameData.GatheringNodes.Where(g => g.Value.Territory.Id == currentTerritory)
-                                                                .Where(g => NodeMatchesCurrentJob(g, DesiredItem))
+                                                                .Where(NodeMatchesCurrentJob)
                                                                 .Where(NodeMatchesDesiredItem).Count();
             var blacklistedNodes = GatherBuddy.Config.BlacklistedAutoGatherNodesByTerritoryId.TryGetValue(currentTerritory, out var list) ? list : new List<Vector3>();
             if (RecentlyVistedNodes.Count >= nodeCount - blacklistedNodes.Count())
@@ -312,7 +306,7 @@ namespace GatherBuddy.Plugin
                 }
 
                 AutoState = AutoStateType.Pathing;
-                PathfindToFarNode();
+                PathfindToFarNode(DesiredItem);
                 return;
             }
 
@@ -379,16 +373,15 @@ namespace GatherBuddy.Plugin
 
         private bool NodeMatchesDesiredItem(KeyValuePair<uint, GatheringNode> pair)
         {
-            foreach (var desiredItem in DesiredItems)
-            {
-                return desiredItem.NodeList.Any(n => n.Id == pair.Value.Id);
-            }
-            return false;
+            var desiredItem = DesiredItem;
+            if (desiredItem == null)
+                return false;
+            return desiredItem.NodeList.Any(n => n.Id == pair.Value.Id);
         }
 
-        private bool NodeMatchesCurrentJob(KeyValuePair<uint, GatheringNode> g, Gatherable DesiredItem)
+        private bool NodeMatchesCurrentJob(KeyValuePair<uint, GatheringNode> g)
         {
-            var job = GetECommonsJobFromDesiredItem(DesiredItem);
+            var job = GetECommonsJobFromDesiredItem();
             if (job == Job.ADV)
                 return false;
             if (job == Job.BTN && g.Value.IsBotanist)
@@ -398,7 +391,7 @@ namespace GatherBuddy.Plugin
             return false;
         }
 
-        private Job GetECommonsJobFromDesiredItem(Gatherable DesiredItem)
+        private Job GetECommonsJobFromDesiredItem()
         {
             if (DesiredItem == null)
                 return Job.ADV;
@@ -461,14 +454,11 @@ namespace GatherBuddy.Plugin
         private bool _hiddenRevealed = false;
         private unsafe void UseLuck(List<uint> itemIds)
         {
-            foreach (var DesiredItem in DesiredItems)
+            if (!DesiredItem?.GatheringData.IsHidden ?? false)
+                return;
+            if (itemIds.Count > 0 && itemIds.Any(i => i == DesiredItem?.ItemId))
             {
-                if (!DesiredItem?.GatheringData.IsHidden ?? false)
-                    return;
-                if (itemIds.Count > 0 && itemIds.Any(i => i == DesiredItem?.ItemId))
-                {
-                    return;
-                }
+                return;
             }
             //if (Dalamud.ClientState.LocalPlayer.CurrentGp < 500) return;
             if (_hiddenRevealed) return;
@@ -572,8 +562,7 @@ namespace GatherBuddy.Plugin
 
         private bool IsDesiredNode(GameObject gameObject)
         {
-            return DesiredItems.Any(desiredItem => desiredItem.NodeList
-                .Any(node => node.WorldCoords.Keys.Any(k => k == gameObject.DataId)));
+            return DesiredItem?.NodeList.Any(n => n.WorldCoords.Keys.Any(k => k == gameObject.DataId)) ?? false;
         }
 
     }
