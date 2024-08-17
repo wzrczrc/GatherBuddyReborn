@@ -262,6 +262,7 @@ namespace GatherBuddy.AutoGather
             }
 
             var matchingNodesInZone2 = matchingNodesInZone.Select(m => m.Position).ToList();
+            var allNode2 = allNodes.Select(o => o.Node).ToList();
             var selectedNode = matchingNodesInZone2.FirstOrDefault(n => !FarNodesSeenSoFar.Contains(n));
             if (selectedNode == Vector3.Zero)
             {
@@ -286,7 +287,7 @@ namespace GatherBuddy.AutoGather
                         => Vector2.Distance(TimedNodePosition.Value, new Vector2(o.X, o.Z))).FirstOrDefault();
             }
 
-            if (allNodes.Any(n => n.Position == selectedNode && Vector3.Distance(n.Position, Player.Position) < 100))
+            if (allNode2.Any(n => n.Position == selectedNode && Vector3.Distance(n.Position, Player.Position) < 100))
             {
                 FarNodesSeenSoFar.Add(selectedNode);
 
