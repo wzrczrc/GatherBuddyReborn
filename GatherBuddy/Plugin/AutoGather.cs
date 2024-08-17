@@ -235,6 +235,9 @@ namespace GatherBuddy.Plugin
                 return;
             }
             
+            GatherBuddy.Log.Information($"DesiredItems Count: {DesiredItems.Count()}");
+            GatherBuddy.Log.Information($"ValidGatherables Count: {ValidGatherables.Count()}");
+            
             var DesiredItem = DesiredItems.FirstOrDefault();
             if (Dalamud.Conditions[ConditionFlag.Gathering])
             {
